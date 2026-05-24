@@ -1,0 +1,36 @@
+defaults:
+  pgassistant_api_url: http://host.docker.internal:8080
+  jobs:
+    - rank_top_10_queries
+    - global_advisor_top_10
+
+sources:
+  - id: northwind-demo
+    name: Northwind Demo
+    enabled: true
+    environment: demo
+    group: demo
+    conn_str: postgresql://postgres:${NORTHWIND_DB_PASSWORD}@host.docker.internal:5420/northwind
+    metadata:
+      app: northwind
+      owner: demo-team
+
+  - id: large-demo
+    name: Large Demo
+    enabled: true
+    environment: demo
+    group: demo
+    conn_str: postgresql://postgres:demo@host.docker.internal:5421/demo
+    metadata:
+      app: largedemo
+      owner: demo-team
+
+  - id: pgassistant-collector-demo
+    name: PGAssistant Collector Demo
+    enabled: true
+    environment: demo
+    group: demo
+    conn_str: postgresql://pga_collector:pga_collector@host.docker.internal:5433/pga_collector
+    metadata:
+      app: largedemo
+      owner: demo-team

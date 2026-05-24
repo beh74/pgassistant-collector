@@ -1,0 +1,53 @@
+services:
+  pgassistant-collector:
+    build: .
+    ports:
+      - "8081:8081"
+    environment:
+      NORTHWIND_DB_PASSWORD: demo
+      PGA_COLLECTOR_DEFAULT_SOURCES_PATH: config/sources.yaml
+      PGA_COLLECTOR_REQUEST_TIMEOUT_SECONDS: 60
+      PGA_COLLECTOR_MAX_CONCURRENT_COLLECTS: 4
+      PGA_COLLECTOR_REPOSITORY_DSN: postgresql://pga_collector:pga_collector@collector-repository:5432/pga_collector
+    volumes:
+      - ./config:/app/config:ro
+    depends_on:
+      collector-repository:
+        condition: service_healthy
+
+  collector-repository:
+    image: postgres:17
+    command: >
+      postgres
+        -c shared_preload_libraries='pg_stat_statements'
+        -c autovacuum=on
+        -c max_connections=200
+        -c shared_buffers='512MB'
+        -c effective_cache_size='1536MB'
+        -c maintenance_work_mem='128MB'
+        -c checkpoint_completion_target=0.9
+        -c wal_buffers='16MB'
+        -c default_statistics_target=100
+        -c random_page_cost=1.1
+        -c effective_io_concurrency=200
+        -c work_mem='2621kB'
+        -c min_wal_size='1GB'
+        -c max_wal_size='4GB'
+        -c huge_pages='off'    
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_DB: pga_collector
+      POSTGRES_USER: pga_collector
+      POSTGRES_PASSWORD: pga_collector
+    volumes:
+      - collector_repository_data:/var/lib/postgresql/data
+      - ./sql/schema.sql:/docker-entrypoint-initdb.d/001_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pga_collector -d pga_collector"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  collector_repository_data:
