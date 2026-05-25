@@ -9,6 +9,10 @@ It exposes four endpoints:
 - `GET /runs/{run_id}`: inspect either a single run or a parent collect_all job.
 - `GET /health`: healthcheck.
 
+## Architecture
+
+![Architecture](medias/architecture.png)
+
 ## Design goals
 
 - Keep credentials ownership outside the collector when using `POST /collect`.
