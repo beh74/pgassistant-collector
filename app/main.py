@@ -5,7 +5,7 @@ from app.config import settings
 
 app = FastAPI(
     title=settings.service_name,
-    version="0.1.0",
+    version="0.1.1",
     description="pgAssistant Collector API",
 )
 

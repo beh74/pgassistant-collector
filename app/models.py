@@ -22,11 +22,17 @@ class RunStatus(str, Enum):
 
 
 class DbConfig(BaseModel):
-    db_host: str
+    # Preferred format: keep the full PostgreSQL URI intact so libpq options
+    # such as sslmode, connect_timeout, application_name and options
+    # (for example search_path) are preserved.
+    db_uri: str | None = Field(default=None, exclude=True)
+
+    # Legacy decomposed connection fields. Kept for backward compatibility.
+    db_host: str | None = None
     db_port: int = 5432
-    db_name: str
-    db_user: str
-    db_password: str = Field(..., exclude=True)
+    db_name: str | None = None
+    db_user: str | None = None
+    db_password: str | None = Field(default=None, exclude=True)
 
 
 class CollectRequest(BaseModel):

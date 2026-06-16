@@ -56,9 +56,20 @@ def load_sources_from_path(source_path: str) -> list[dict[str, Any]]:
 
         for raw_source in raw_sources:
             source = {**defaults, **raw_source}
+            db_uri = source.get("db_uri")
+            if db_uri:
+                source["db_uri"] = expand_env_vars(db_uri)
+
             conn_str = source.get("conn_str")
             if conn_str:
                 source["conn_str"] = expand_env_vars(conn_str)
+
+            # Preferred field is db_uri. Keep conn_str as a legacy alias because
+            # existing collector code paths may still read source["conn_str"].
+            if source.get("db_uri"):
+                source["conn_str"] = source["db_uri"]
+            elif source.get("conn_str"):
+                source["db_uri"] = source["conn_str"]
 
             jobs = source.get("jobs") or defaults.get("jobs") or [
                 JobType.rank_top_10_queries.value,
@@ -70,8 +81,10 @@ def load_sources_from_path(source_path: str) -> list[dict[str, Any]]:
                 raise SourceConfigError("Every source must define an 'id'")
             if "pgassistant_api_url" not in source:
                 raise SourceConfigError(f"Source {source['id']} must define pgassistant_api_url")
-            if "conn_str" not in source:
-                raise SourceConfigError(f"Source {source['id']} must define conn_str")
+            if "db_uri" not in source and "conn_str" not in source:
+                raise SourceConfigError(
+                    f"Source {source['id']} must define db_uri or conn_str"
+                )
 
             sources.append(source)
 

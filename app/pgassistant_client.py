@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from time import perf_counter
-from urllib.parse import unquote, urlparse
+from urllib.parse import urlparse
 
 import httpx
 
@@ -23,6 +23,15 @@ class PgAssistantCallResult:
 
 
 def parse_conn_str(conn_str: str) -> DbConfig:
+    """
+    Validate a PostgreSQL connection URI and keep it intact.
+
+    The collector must not decompose the URI into host/user/password fields,
+    otherwise libpq URI parameters such as options, sslmode, connect_timeout,
+    application_name or target_session_attrs are lost before reaching
+    pgAssistant.
+    """
+    conn_str = conn_str.strip()
     parsed = urlparse(conn_str)
 
     if parsed.scheme not in {"postgresql", "postgres"}:
@@ -36,13 +45,7 @@ def parse_conn_str(conn_str: str) -> DbConfig:
     if parsed.password is None:
         raise PgAssistantClientError("Missing password in connection string")
 
-    return DbConfig(
-        db_host=parsed.hostname,
-        db_port=parsed.port or 5432,
-        db_name=unquote(parsed.path.lstrip("/")),
-        db_user=unquote(parsed.username),
-        db_password=unquote(parsed.password),
-    )
+    return DbConfig(db_uri=conn_str)
 
 
 def endpoint_for_job(job_type: JobType) -> str:
@@ -69,15 +72,28 @@ class PgAssistantClient:
         endpoint = endpoint_for_job(job_type)
         url = pgassistant_api_url.rstrip("/") + endpoint
 
-        payload = {
-            "db_config": {
+        if db_config.db_uri:
+            payload_db_config = {"db_uri": db_config.db_uri}
+        else:
+            missing_fields = [
+                field_name
+                for field_name in ("db_host", "db_name", "db_user", "db_password")
+                if not getattr(db_config, field_name)
+            ]
+            if missing_fields:
+                raise PgAssistantClientError(
+                    "Missing database connection fields: " + ", ".join(missing_fields)
+                )
+
+            payload_db_config = {
                 "db_host": db_config.db_host,
                 "db_port": db_config.db_port,
                 "db_name": db_config.db_name,
                 "db_user": db_config.db_user,
                 "db_password": db_config.db_password,
             }
-        }
+
+        payload = {"db_config": payload_db_config}
         started = perf_counter()
 
         try:
