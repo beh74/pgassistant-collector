@@ -132,4 +132,45 @@ The repository uses a hybrid model:
 - `pga_global_advisor_snapshot` extracts dashboard-friendly fields for advisor findings.
 - `pga_collection_run` and `pga_collection_job_result` store execution metadata.
 
+The high-volume repository tables are partitioned weekly:
+
+- `pga_collection_job_result` by `created_at`.
+- `pga_collection_raw_payload` by `collected_at`.
+- `pga_ranked_query_snapshot` by `collected_at`.
+- `pga_global_advisor_snapshot` by `collected_at`.
+
+The schema creates partitions for the previous week, the current week, and the next 8 weeks by default. To prepare more partitions later:
+
+```sql
+SELECT pga_create_weekly_partitions(CURRENT_DATE, 12, 1);
+```
+
+To purge partitioned data older than a retention window, drop old weekly partitions:
+
+```sql
+SELECT pga_drop_partitions_older_than(8);
+```
+
+The argument is the number of weeks to retain. The purge also removes matching old `pga_collection_run` rows after their partitioned child rows have been dropped.
+
+The same operations are exposed by the collector API:
+
+```bash
+curl -X POST http://localhost:8081/repository/partitions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "from_date": "2026-06-28",
+    "weeks_ahead": 12,
+    "weeks_back": 1
+  }'
+```
+
+```bash
+curl -X POST http://localhost:8081/repository/partitions/purge \
+  -H "Content-Type: application/json" \
+  -d '{
+    "retain_weeks": 8
+  }'
+```
+
 Connection strings and database passwords are never stored in the repository.

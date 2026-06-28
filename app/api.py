@@ -3,6 +3,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
+from psycopg import Error as PsycopgError
 
 from app.collector import execute_collect_all_job, execute_collect_request
 from app.config import settings
@@ -11,10 +12,15 @@ from app.models import (
     CollectAllResponse,
     CollectRequest,
     CollectResponse,
+    CreatePartitionsRequest,
+    CreatePartitionsResponse,
+    DropPartitionsRequest,
+    DropPartitionsResponse,
     HealthResponse,
     ParentJobRecord,
     RunStatus,
 )
+from app.repository import repository
 from app.runs import run_store
 from app.sources import load_sources_from_path
 
@@ -68,6 +74,44 @@ async def collect_all(
         job_id=parent_job.job_id,
         status=parent_job.status,
         targets_queued=len(enabled_sources),
+    )
+
+
+@router.post("/repository/partitions", response_model=CreatePartitionsResponse)
+async def create_repository_partitions(
+    request: CreatePartitionsRequest,
+) -> CreatePartitionsResponse:
+    try:
+        partitions = await repository.create_weekly_partitions(
+            from_date=request.from_date,
+            weeks_ahead=request.weeks_ahead,
+            weeks_back=request.weeks_back,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except PsycopgError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    return CreatePartitionsResponse(status="ok", partitions=partitions)
+
+
+@router.post("/repository/partitions/purge", response_model=DropPartitionsResponse)
+async def purge_repository_partitions(
+    request: DropPartitionsRequest,
+) -> DropPartitionsResponse:
+    try:
+        dropped_partitions, partitions = await repository.drop_partitions_older_than(
+            retain_weeks=request.retain_weeks,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except PsycopgError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    return DropPartitionsResponse(
+        status="ok",
+        dropped_partitions=dropped_partitions,
+        partitions=partitions,
     )
 
 

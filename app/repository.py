@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+from datetime import date
 from typing import Any
 
 import psycopg
 from psycopg.types.json import Jsonb
 
 from app.config import settings
-from app.models import RunRecord
+from app.models import PartitionSummary, RunRecord
 
 
 class Repository:
@@ -152,6 +153,65 @@ class Repository:
                 await self._save_ranked_queries(conn, run, payload)
             elif job_type == "global_advisor_top_10":
                 await self._save_global_advisor(conn, run, payload)
+
+    async def create_weekly_partitions(
+        self,
+        *,
+        from_date: date,
+        weeks_ahead: int,
+        weeks_back: int,
+    ) -> list[PartitionSummary]:
+        if not self.enabled:
+            raise RuntimeError("Repository DSN is not configured")
+
+        async with await self._connect() as conn:
+            await conn.execute(
+                "SELECT pga_create_weekly_partitions(%s, %s, %s)",
+                (from_date, weeks_ahead, weeks_back),
+            )
+            return await self._partition_summaries(conn)
+
+    async def drop_partitions_older_than(self, *, retain_weeks: int) -> tuple[int, list[PartitionSummary]]:
+        if not self.enabled:
+            raise RuntimeError("Repository DSN is not configured")
+
+        async with await self._connect() as conn:
+            cursor = await conn.execute(
+                "SELECT pga_drop_partitions_older_than(%s)",
+                (retain_weeks,),
+            )
+            dropped_partitions = await cursor.fetchone()
+            return (
+                int(dropped_partitions[0]) if dropped_partitions else 0,
+                await self._partition_summaries(conn),
+            )
+
+    async def _partition_summaries(
+        self,
+        conn: psycopg.AsyncConnection,
+    ) -> list[PartitionSummary]:
+        cursor = await conn.execute(
+            """
+            SELECT
+                parent_table::text,
+                count(*)::integer AS partitions,
+                min(range_start) AS first_partition,
+                max(range_end) AS last_partition
+            FROM pga_partition_registry
+            GROUP BY parent_table
+            ORDER BY parent_table
+            """
+        )
+        rows = await cursor.fetchall()
+        return [
+            PartitionSummary(
+                parent_table=row[0],
+                partitions=row[1],
+                first_partition=row[2],
+                last_partition=row[3],
+            )
+            for row in rows
+        ]
 
     async def _save_ranked_queries(
         self,

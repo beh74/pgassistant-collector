@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from enum import Enum
 from typing import Any, Literal
 from uuid import UUID, uuid4
@@ -112,3 +112,31 @@ class HealthResponse(BaseModel):
     status: str
     service: str = "pgassistant-collector"
     time: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class CreatePartitionsRequest(BaseModel):
+    from_date: date = Field(default_factory=lambda: datetime.now(timezone.utc).date())
+    weeks_ahead: int = Field(default=8, ge=0)
+    weeks_back: int = Field(default=1, ge=0)
+
+
+class PartitionSummary(BaseModel):
+    parent_table: str
+    partitions: int
+    first_partition: datetime | None = None
+    last_partition: datetime | None = None
+
+
+class CreatePartitionsResponse(BaseModel):
+    status: str
+    partitions: list[PartitionSummary]
+
+
+class DropPartitionsRequest(BaseModel):
+    retain_weeks: int = Field(..., ge=1)
+
+
+class DropPartitionsResponse(BaseModel):
+    status: str
+    dropped_partitions: int
+    partitions: list[PartitionSummary]
