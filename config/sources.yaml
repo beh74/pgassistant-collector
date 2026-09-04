@@ -2,7 +2,7 @@ defaults:
   pgassistant_api_url: http://host.docker.internal:8080
   jobs:
     - rank_top_10_queries
-    - global_advisor_top_10
+    - executive_plan
 
 sources:
   - id: northwind-demo

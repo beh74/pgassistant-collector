@@ -73,7 +73,7 @@ def load_sources_from_path(source_path: str) -> list[dict[str, Any]]:
 
             jobs = source.get("jobs") or defaults.get("jobs") or [
                 JobType.rank_top_10_queries.value,
-                JobType.global_advisor_top_10.value,
+                JobType.executive_plan.value,
             ]
             source["jobs"] = [JobType(job) for job in jobs]
 

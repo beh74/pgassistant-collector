@@ -40,7 +40,7 @@ defaults:
   pgassistant_api_url: http://localhost:8080
   jobs:
     - rank_top_10_queries
-    - global_advisor_top_10
+    - executive_plan
 
 sources:
   - id: northwind-demo
@@ -65,7 +65,7 @@ curl -X POST http://localhost:8081/collect \
     "conn_str": "postgresql://postgres:demo@host.docker.internal:5420/northwind",
     "jobs": [
       "rank_top_10_queries",
-      "global_advisor_top_10"
+      "executive_plan"
     ],
     "metadata": {
       "source": "manual"
@@ -103,6 +103,16 @@ curl -X GET http://localhost:8080/api/v1/rank_top_10_queries \
   -d '{ "db_config": { ... } }'
 ```
 
+The Executive Plan is collected from:
+
+```text
+GET /api/v1/executive_plan
+```
+
+It consolidates Global, Index, Parameter and Autovacuum advisor results. The
+default pgAssistant request timeout is 300 seconds because building the complete
+plan is substantially more expensive than collecting the query ranking alone.
+
 ## Next steps
 
 - Add API authentication.
@@ -125,19 +135,29 @@ The schema is initialized from:
 sql/schema.sql
 ```
 
-The repository uses a hybrid model:
+The repository uses a normalized Executive Plan model:
 
-- `pga_collection_raw_payload` stores the full pgAssistant API response as `jsonb`.
+- `pga_collection_payload` stores every complete pgAssistant API response as `jsonb`.
 - `pga_ranked_query_snapshot` extracts dashboard-friendly fields for ranked queries.
-- `pga_global_advisor_snapshot` extracts dashboard-friendly fields for advisor findings.
+- `pga_executive_plan_snapshot` stores plan-level summaries and advisor errors.
+- `pga_executive_plan_phase_snapshot` stores ordered implementation phases.
+- `pga_executive_plan_task_snapshot` stores deployable work packages.
+- `pga_executive_plan_recommendation_snapshot` stores normalized recommendations,
+  stable finding fingerprints and exact-action fingerprints.
 - `pga_collection_run` and `pga_collection_job_result` store execution metadata.
+
+Each run also stores the non-secret database identity (`db_host`, `db_port`,
+`db_name`, and `db_user`) used to help select the correct `target_id`. Connection
+URIs and passwords are never persisted.
+
+This schema intentionally replaces the former Global Advisor repository design.
+There is no in-place migration from the former schema; initialize a new repository
+database or recreate the collector repository volume when upgrading.
 
 The high-volume repository tables are partitioned weekly:
 
-- `pga_collection_job_result` by `created_at`.
-- `pga_collection_raw_payload` by `collected_at`.
+- `pga_collection_payload` by `collected_at`.
 - `pga_ranked_query_snapshot` by `collected_at`.
-- `pga_global_advisor_snapshot` by `collected_at`.
 
 The schema creates partitions for the previous week, the current week, and the next 8 weeks by default. To prepare more partitions later:
 
@@ -160,7 +180,7 @@ curl -X POST http://localhost:8081/repository/partitions \
   -H "Content-Type: application/json" \
   -d '{
     "from_date": "2026-06-28",
-    "weeks_ahead": 12,
+    "weeks_ahead": 1,
     "weeks_back": 1
   }'
 ```
@@ -169,7 +189,7 @@ curl -X POST http://localhost:8081/repository/partitions \
 curl -X POST http://localhost:8081/repository/partitions/purge \
   -H "Content-Type: application/json" \
   -d '{
-    "retain_weeks": 8
+    "retain_weeks": 1
   }'
 ```
 

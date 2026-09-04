@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 class JobType(str, Enum):
     rank_top_10_queries = "rank_top_10_queries"
-    global_advisor_top_10 = "global_advisor_top_10"
+    executive_plan = "executive_plan"
 
 
 class RunStatus(str, Enum):
@@ -37,13 +37,14 @@ class DbConfig(BaseModel):
 
 class CollectRequest(BaseModel):
     target_id: str = Field(..., examples=["northwind-demo"])
+    target_name: str | None = None
     conn_str: str | None = Field(default=None, exclude=True)
     db_config: DbConfig | None = Field(default=None, exclude=True)
     pgassistant_api_url: str = Field(..., examples=["http://localhost:8080"])
     jobs: list[JobType] = Field(
         default_factory=lambda: [
             JobType.rank_top_10_queries,
-            JobType.global_advisor_top_10,
+            JobType.executive_plan,
         ]
     )
     environment: str | None = None
@@ -70,12 +71,17 @@ class RunRecord(BaseModel):
     run_id: UUID = Field(default_factory=uuid4)
     parent_job_id: UUID | None = None
     target_id: str
+    target_name: str | None = None
     trigger_type: Literal["api", "collect_all"]
     status: RunStatus = RunStatus.queued
     started_at: datetime | None = None
     finished_at: datetime | None = None
     environment: str | None = None
     group: str | None = None
+    db_host: str | None = None
+    db_port: int | None = None
+    db_name: str | None = None
+    db_user: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     jobs_requested: list[JobType] = Field(default_factory=list)
     job_results: list[JobResult] = Field(default_factory=list)

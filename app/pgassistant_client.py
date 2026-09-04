@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from time import perf_counter
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 import httpx
 
@@ -13,6 +13,39 @@ from app.security import mask_secret
 
 class PgAssistantClientError(Exception):
     pass
+
+
+@dataclass(frozen=True)
+class DatabaseIdentity:
+    host: str | None
+    port: int | None
+    name: str | None
+    user: str | None
+
+
+def database_identity(db_config: DbConfig) -> DatabaseIdentity:
+    """Return non-secret connection fields suitable for repository metadata."""
+    if not db_config.db_uri:
+        return DatabaseIdentity(
+            host=db_config.db_host,
+            port=db_config.db_port,
+            name=db_config.db_name,
+            user=db_config.db_user,
+        )
+
+    parsed = urlparse(db_config.db_uri)
+    try:
+        port = parsed.port or 5432
+    except ValueError as exc:
+        raise PgAssistantClientError("Invalid port in connection string") from exc
+
+    database_name = unquote(parsed.path.lstrip("/")) if parsed.path else None
+    return DatabaseIdentity(
+        host=parsed.hostname,
+        port=port,
+        name=database_name or None,
+        user=unquote(parsed.username) if parsed.username is not None else None,
+    )
 
 
 @dataclass
@@ -45,21 +78,23 @@ def parse_conn_str(conn_str: str) -> DbConfig:
     if parsed.password is None:
         raise PgAssistantClientError("Missing password in connection string")
 
-    return DbConfig(db_uri=conn_str)
+    db_config = DbConfig(db_uri=conn_str)
+    database_identity(db_config)
+    return db_config
 
 
 def endpoint_for_job(job_type: JobType) -> str:
     match job_type:
         case JobType.rank_top_10_queries:
             return "/api/v1/rank_top_10_queries"
-        case JobType.global_advisor_top_10:
-            return "/api/v1/global_advisor"
+        case JobType.executive_plan:
+            return "/api/v1/executive_plan"
         case _:
             raise PgAssistantClientError(f"Unsupported job type: {job_type}")
 
 
 class PgAssistantClient:
-    def __init__(self, timeout_seconds: float = 60.0):
+    def __init__(self, timeout_seconds: float = 300.0):
         self.timeout_seconds = timeout_seconds
 
     async def collect_job(

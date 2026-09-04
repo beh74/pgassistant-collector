@@ -13,7 +13,12 @@ from app.models import (
     RunRecord,
     RunStatus,
 )
-from app.pgassistant_client import PgAssistantClient, PgAssistantClientError, parse_conn_str
+from app.pgassistant_client import (
+    PgAssistantClient,
+    PgAssistantClientError,
+    database_identity,
+    parse_conn_str,
+)
 from app.repository import repository
 from app.runs import run_store
 from app.sources import load_sources_from_path
@@ -32,22 +37,17 @@ def summarize_payload(job_type: JobType, payload: dict) -> dict:
                 "top_priority_level": ranked_queries[0].get("priority_level") if ranked_queries else None,
             }
 
-    if job_type == JobType.global_advisor_top_10:
-        items = payload.get("ranked_queries") or payload.get("recommendations") or []
-        if isinstance(items, list):
-            high_count = sum(1 for item in items if isinstance(item, dict) and item.get("priority") == "HIGH")
-            lock_count = sum(1 for item in items if isinstance(item, dict) and item.get("requires_lock") is True)
-            manual_count = sum(1 for item in items if isinstance(item, dict) and item.get("manual_review_required") is True)
-
-            return {
-                "recommendations_count": len(items),
-                "high_priority_count": high_count,
-                "requires_lock_count": lock_count,
-                "manual_review_required_count": manual_count,
-                "top_rank": items[0].get("rank") if items and isinstance(items[0], dict) else None,
-                "top_priority": items[0].get("priority") if items and isinstance(items[0], dict) else None,
-                "top_title": items[0].get("title") if items and isinstance(items[0], dict) else None,
-            }
+    if job_type == JobType.executive_plan:
+        summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+        errors = payload.get("errors") if isinstance(payload.get("errors"), list) else []
+        return {
+            "database": payload.get("database"),
+            "recommendations_collected": summary.get("recommendations_collected"),
+            "recommendations_after_deduplication": summary.get("recommendations_after_deduplication"),
+            "tasks": summary.get("tasks"),
+            "phases": summary.get("phases"),
+            "advisor_errors": len(errors),
+        }
 
     for key in ("ranked_queries", "recommendations", "queries", "data", "results", "items"):
         value = payload.get(key)
@@ -66,20 +66,9 @@ async def execute_collect_request(
     trigger_type: str,
     parent_job_id: UUID | None = None,
 ) -> RunRecord:
-    run = RunRecord(
-        parent_job_id=parent_job_id,
-        target_id=request.target_id,
-        trigger_type=trigger_type,  # type: ignore[arg-type]
-        status=RunStatus.running,
-        started_at=datetime.now(timezone.utc),
-        environment=request.environment,
-        group=request.group,
-        metadata=request.metadata,
-        jobs_requested=request.jobs,
-    )
-    run_store.create_run(run)
-    await repository.save_run_started(run)
-
+    db_config = None
+    identity = None
+    connection_error = None
     try:
         if request.db_config is not None:
             db_config = request.db_config
@@ -87,13 +76,38 @@ async def execute_collect_request(
             db_config = parse_conn_str(request.conn_str)
         else:
             raise PgAssistantClientError("Either conn_str or db_config must be provided")
+        identity = database_identity(db_config)
     except PgAssistantClientError as exc:
+        connection_error = exc
+
+    run = RunRecord(
+        parent_job_id=parent_job_id,
+        target_id=request.target_id,
+        target_name=request.target_name,
+        trigger_type=trigger_type,  # type: ignore[arg-type]
+        status=RunStatus.running,
+        started_at=datetime.now(timezone.utc),
+        environment=request.environment,
+        group=request.group,
+        db_host=identity.host if identity else None,
+        db_port=identity.port if identity else None,
+        db_name=identity.name if identity else None,
+        db_user=identity.user if identity else None,
+        metadata=request.metadata,
+        jobs_requested=request.jobs,
+    )
+    run_store.create_run(run)
+    await repository.save_run_started(run)
+
+    if connection_error is not None:
         run.status = RunStatus.failed
         run.finished_at = datetime.now(timezone.utc)
-        run.error_message = str(exc)
+        run.error_message = str(connection_error)
         run_store.update_run(run)
         await repository.save_run_finished(run)
         return run
+
+    assert db_config is not None
 
     client = PgAssistantClient(timeout_seconds=settings.request_timeout_seconds)
     has_failure = False
@@ -110,10 +124,17 @@ async def execute_collect_request(
                 job_type=job_type.value,
                 payload=result.payload,
             )
+            job_status = (
+                RunStatus.partial
+                if job_type == JobType.executive_plan and result.payload.get("errors")
+                else RunStatus.completed
+            )
+            if job_status == RunStatus.partial:
+                has_failure = True
             run.job_results.append(
                 JobResult(
                     job_type=job_type,
-                    status=RunStatus.completed,
+                    status=job_status,
                     response_time_ms=result.response_time_ms,
                     payload_summary=summarize_payload(job_type, result.payload),
                 )
@@ -130,8 +151,12 @@ async def execute_collect_request(
 
     run.finished_at = datetime.now(timezone.utc)
     if has_failure:
-        successful = [r for r in run.job_results if r.status == RunStatus.completed]
-        run.status = RunStatus.partial if successful else RunStatus.failed
+        usable_results = [
+            result
+            for result in run.job_results
+            if result.status in {RunStatus.completed, RunStatus.partial}
+        ]
+        run.status = RunStatus.partial if usable_results else RunStatus.failed
     else:
         run.status = RunStatus.completed
 
@@ -143,6 +168,7 @@ async def execute_collect_request(
 def source_to_collect_request(source: dict, override_jobs: list[JobType] | None = None) -> CollectRequest:
     return CollectRequest(
         target_id=source["id"],
+        target_name=source.get("name"),
         conn_str=source.get("conn_str"),
         pgassistant_api_url=source["pgassistant_api_url"],
         jobs=override_jobs or source["jobs"],

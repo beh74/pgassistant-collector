@@ -6,7 +6,7 @@ services:
     environment:
       NORTHWIND_DB_PASSWORD: demo
       PGA_COLLECTOR_DEFAULT_SOURCES_PATH: config/sources.yaml
-      PGA_COLLECTOR_REQUEST_TIMEOUT_SECONDS: 60
+      PGA_COLLECTOR_REQUEST_TIMEOUT_SECONDS: 300
       PGA_COLLECTOR_MAX_CONCURRENT_COLLECTS: 4
       PGA_COLLECTOR_REPOSITORY_DSN: postgresql://pga_collector:pga_collector@collector-repository:5432/pga_collector
     volumes:
